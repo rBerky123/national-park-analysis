@@ -147,60 +147,6 @@ Decisions worth knowing about:
 
 ---
 
-## SQL highlights
-
-**Joining visits to weather without dropping missing months** (weather is the complete table, so it is on the left):
-
-```sql
-CREATE OR REPLACE TABLE PARKS_DB.CLEAN.PARK_MONTH AS
-SELECT
-  w.unit_code, w.month_start,
-  w.avg_high_c, w.avg_low_c, w.total_precip_mm, w.freezing_days,
-  v.recreation_visits
-FROM PARKS_DB.CLEAN.WEATHER_MONTHLY w
-LEFT JOIN PARKS_DB.CLEAN.VISITS v
-  ON w.unit_code = v.unit_code
- AND w.month_start = v.month_start;
-```
-
-**Seasonality with window functions** (share of the year per month, and each month's rank within its park):
-
-```sql
-WITH monthly AS (
-  SELECT unit_code, park_name, month, AVG(recreation_visits) AS avg_visits
-  FROM PARKS_DB.CLEAN.VISITS
-  GROUP BY unit_code, park_name, month
-),
-shares AS (
-  SELECT *,
-         avg_visits / SUM(avg_visits) OVER (PARTITION BY unit_code) AS month_share,
-         ROW_NUMBER() OVER (PARTITION BY unit_code ORDER BY avg_visits DESC) AS month_rank
-  FROM monthly
-)
-SELECT unit_code, park_name,
-       MAX(CASE WHEN month_rank = 1 THEN month END)       AS peak_month,
-       MAX(CASE WHEN month_rank = 1 THEN month_share END) AS peak_share,
-       SUM(month_share)                                   AS top3_share
-FROM shares
-WHERE month_rank <= 3
-GROUP BY unit_code, park_name;
-```
-
-Other techniques used: conditional aggregation (`SUM(CASE WHEN year = 2019 ...)`), `CORR`, `DATE_TRUNC`, `COUNT_IF`, `NULLIF` to guard divisions, and CTEs.
-
----
-
-## Limitations
-
-- **Weather is one gridded point per park, not station data.** Open-Meteo reanalysis is sampled at a single coordinate per park, so for parks that span large elevation ranges the grid cell may not match where visitors go. The grid elevation is 23 m at Acadia, 1,263 m at Hawai'i Volcanoes, and **1,849 m at Death Valley**, whose valley floor is below sea level. Death Valley's temperatures are therefore much cooler than most visitors experience, which likely contributes to its near-zero temperature correlation. Yosemite, Sequoia and Kings Canyon, and Mount Rainier have a similar offset (grid points above where most visitors are).
-- **Correlation is not causation.** Temperature is a proxy for season, so it also captures school vacations, road and facility closures, and holidays.
-- **Pearson correlation only measures straight-line relationships.** Hump-shaped patterns and parks with flat temperatures can score near zero even when weather matters. The 2020 pandemic year is included in the seasonality and correlation figures, and a version excluding it was not tested.
-- **Percent changes are sensitive to park size and baseline year.** Small parks swing widely (American Samoa's growth figure is in the thousands of percent on a base of about 1,000 visits), so the growth ranking uses only parks with a full baseline and at least 100,000 visits a year. The Virgin Islands reads about 317% of its 2019 level, the largest in the set, yet its 2021-25 average is 52% below 2000-04, which suggests an unusually low 2019 baseline.
-- **Some units were redesignated as national parks during the period** (for example Indiana Dunes, White Sands, New River Gorge, and Gateway Arch). The NPS reports their full 2000-2025 history under the current unit code, so totals include years before designation.
-- **"Recreation visits" counts entries, not unique people.**
-- **American Samoa and Channel Islands have gaps** (see above), so American Samoa is excluded from the growth ranking.
-
----
 
 ## How to run it
 
@@ -236,45 +182,5 @@ Use your Snowflake **login name** for `SNOWFLAKE_USER`, which can differ from yo
 5. **Load RAW:** `python load_snowflake.py`. It is safe to rerun.
 6. **Build CLEAN and ANALYTICS:** run the remaining files in `sql/` in numeric order.
 7. **Export for Tableau:** download `ANALYTICS.PARK_SUMMARY` and `ANALYTICS.PARK_MONTH_EXPORT` as CSVs and connect them in Tableau.
-
-### Project structure
-
-```
-.
-├── main.py                # NPS API coordinates + Open-Meteo weather download (cached, resumable)
-├── flatten_weather.py     # per-park weather JSON -> one daily CSV
-├── load_snowflake.py      # loads RAW tables into Snowflake (idempotent)
-├── check_elevation.py     # prints the weather grid elevation for each park
-├── sql/
-│   ├── 00_setup.sql                       # warehouse, database, RAW/CLEAN/ANALYTICS schemas
-│   ├── 01_clean_visits.sql
-│   ├── 02_clean_weather_monthly.sql
-│   ├── 03_clean_park_month.sql
-│   ├── 04_analytics_seasonality.sql
-│   ├── 05_analytics_weather_sensitivity.sql
-│   ├── 06_analytics_recovery.sql
-│   ├── 07_analytics_growth.sql
-│   ├── 08_analytics_monthly_share.sql
-│   ├── 09_analytics_park_summary.sql
-│   └── 10_analytics_park_month_export.sql
-├── .env.example
-├── .gitignore
-└── README.md
-```
-
----
-
-## Possible next steps
-
-- Test how much the correlations change with 2020 and 2021 excluded.
-- Add a second weather point for parks with large elevation ranges (Death Valley, Yosemite, Sequoia and Kings Canyon).
-- Add automated data-quality tests (row counts, duplicate keys) as scheduled SQL checks.
-- Move the CLEAN and ANALYTICS transformations into dbt.
-
----
-
-## Acknowledgments
-
-Visit data: National Park Service Visitor Use Statistics. Park metadata: NPS API. Weather data by [Open-Meteo.com](https://open-meteo.com/) (CC BY 4.0).
 
 Built by Ryan Berkhimer.
