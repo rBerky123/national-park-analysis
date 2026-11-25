@@ -1,0 +1,18 @@
+# Credentials
+.env
+*.env
+
+# Data and generated files (reproducible from the scripts)
+raw/
+park_info.json
+national_park_data.csv
+tableau/
+*.twbx
+
+# Editor and OS
+.vscode/
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
